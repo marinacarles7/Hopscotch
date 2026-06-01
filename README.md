@@ -82,8 +82,4 @@ This was my first full-stack web project. I built everything from scratch includ
 
 ---
 
-## Running locally
 
-1. Clone the repo: `git clone https://github.com/marinacarles7/Hopscotch.git`
-2. Install dependencies: `npm install`
-3. Create a `.env.local` file with the following keys:
