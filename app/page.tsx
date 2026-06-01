@@ -21,10 +21,10 @@ export default function Home() {
   const [chatLoading, setChatLoading] = useState(false)
   const [generatedReview, setGeneratedReview] = useState('')
   const [newHighlight, setNewHighlight] = useState('')
-  const chatRef = useRef<any>(null)
   const [recs, setRecs] = useState<any[]>([])
-const [recLoading, setRecLoading] = useState(false)
-const [recsFetched, setRecsFetched] = useState(false)
+  const [recLoading, setRecLoading] = useState(false)
+  const [recsFetched, setRecsFetched] = useState(false)
+  const chatRef = useRef<any>(null)
 
   useEffect(() => { fetchBooks() }, [])
   useEffect(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight }, [chatMessages])
@@ -164,33 +164,64 @@ const [recsFetched, setRecsFetched] = useState(false)
     setChatLoading(false)
   }
 
-  const allHighlights = books.flatMap(b => (b.highlights || []).map((h: string) => ({ text: h, book: b.title, author: b.author })))
-async function getRecommendations() {
-  setRecLoading(true)
-  const finished = books.filter(b => b.status === 'finished')
-  const summary = finished.length > 0
-    ? finished.map(b => `${b.title} by ${b.author} (${b.genre || 'unknown genre'}, rated ${b.rating}/5)`).join('; ')
-    : 'no books finished yet, suggest popular literary fiction'
-  try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: [{
-          role: 'user',
-          content: `Based on these books a reader has finished: ${summary} — recommend 4 books they would love. Return ONLY a JSON array with no markdown, like: [{"title":"...","author":"...","reason":"...","genre":"..."}]. Keep each reason to 1 sentence that directly references their taste.`
-        }]
+  async function getRecommendations() {
+    setRecLoading(true)
+    const finished = books.filter(b => b.status === 'finished')
+    const summary = finished.length > 0
+      ? finished.map(b => `${b.title} by ${b.author} (${b.genre || 'unknown genre'}, rated ${b.rating}/5)`).join('; ')
+      : 'no books finished yet, suggest popular literary fiction'
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{
+            role: 'user',
+            content: `Based on these books a reader has finished: ${summary} — recommend 4 books they would love. Return ONLY a JSON array with no markdown, like: [{"title":"...","author":"...","reason":"...","genre":"..."}]. Keep each reason to 1 sentence that directly references their taste.`
+          }]
+        })
       })
-    })
-    const data = await res.json()
-    const text = data.content || '[]'
-    const clean = text.replace(/```json|```/g, '').trim()
-    const parsed = JSON.parse(clean)
-    setRecs(parsed)
-    setRecsFetched(true)
-  } catch { setRecs([]) }
-  setRecLoading(false)
-}
+      const data = await res.json()
+      const text = data.content || '[]'
+      const clean = text.replace(/```json|```/g, '').trim()
+      const parsed = JSON.parse(clean)
+      setRecs(parsed)
+      setRecsFetched(true)
+    } catch { setRecs([]) }
+    setRecLoading(false)
+  }
+
+  async function importGoodreadsCSV(e: any) {
+    const file = e.target.files[0]
+    if (!file) return
+    const text = await file.text()
+    const lines = text.trim().split('\n')
+    const headers = lines[0].split(',').map((h: string) => h.replace(/"/g, '').trim())
+    const titleIdx = headers.indexOf('Title')
+    const authorIdx = headers.indexOf('Author')
+    const ratingIdx = headers.indexOf('My Rating')
+    const shelvesIdx = headers.indexOf('Exclusive Shelf')
+    const dateIdx = headers.indexOf('Date Read')
+    const genreIdx = headers.indexOf('Bookshelves')
+    const imported = []
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].match(/(".*?"|[^,]+)(?=,|$)/g)
+      if (!cols) continue
+      const clean = (idx: number) => (cols[idx] || '').replace(/"/g, '').trim()
+      const title = clean(titleIdx)
+      if (!title) continue
+      const status = clean(shelvesIdx) === 'read' ? 'finished' : clean(shelvesIdx) === 'currently-reading' ? 'reading' : 'want'
+      imported.push({ title, author: clean(authorIdx), rating: parseInt(clean(ratingIdx)) || 0, status, date_finished: clean(dateIdx) || null, genre: clean(genreIdx) || '', cover: '', notes: '', review: '', highlights: [] })
+    }
+    for (const book of imported) {
+      await insertBook(book)
+    }
+    await fetchBooks()
+    alert(`Imported ${imported.length} books!`)
+  }
+
+  const allHighlights = books.flatMap(b => (b.highlights || []).map((h: string) => ({ text: h, book: b.title, author: b.author })))
+
   return (
     <main style={{ maxWidth: '1100px', margin: '0 auto', padding: '0 20px 60px' }}>
       <header style={{ borderBottom: '2px solid #1a1410', padding: '28px 0 18px', marginBottom: '36px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -213,7 +244,13 @@ async function getRecommendations() {
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
             <h2 style={{ fontFamily: 'Georgia, serif', fontSize: '1.4rem', fontStyle: 'italic' }}>My Library</h2>
-            <button onClick={() => setShowAddForm(true)} style={{ background: '#1a1410', color: '#faf7f2', border: 'none', padding: '8px 18px', fontFamily: 'Georgia, serif', fontSize: '0.8rem', cursor: 'pointer' }}>+ Add Book</button>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <label style={{ background: 'transparent', color: '#1a1410', border: '1.5px solid #1a1410', padding: '8px 18px', fontFamily: 'Georgia, serif', fontSize: '0.8rem', cursor: 'pointer' }}>
+                Import Goodreads
+                <input type="file" accept=".csv" onChange={importGoodreadsCSV} style={{ display: 'none' }} />
+              </label>
+              <button onClick={() => setShowAddForm(true)} style={{ background: '#1a1410', color: '#faf7f2', border: 'none', padding: '8px 18px', fontFamily: 'Georgia, serif', fontSize: '0.8rem', cursor: 'pointer' }}>+ Add Book</button>
+            </div>
           </div>
 
           {showAddForm && (
@@ -335,44 +372,41 @@ async function getRecommendations() {
       )}
 
       {view === 'discover' && (
-  <div>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-      <div>
-        <h2 style={{ fontFamily: 'Georgia, serif', fontSize: '1.4rem', fontStyle: 'italic' }}>What to Read Next</h2>
-        <p style={{ color: '#7a6a57', fontSize: '0.85rem', marginTop: '4px' }}>Based on your reading history</p>
-      </div>
-      <button onClick={getRecommendations} disabled={recLoading} style={{ background: '#1a1410', color: '#faf7f2', border: 'none', padding: '8px 18px', fontFamily: 'Georgia, serif', fontSize: '0.8rem', cursor: 'pointer' }}>
-        {recLoading ? 'Thinking...' : recsFetched ? 'Refresh' : 'Get Recommendations'}
-      </button>
-    </div>
-
-    {!recsFetched && !recLoading && (
-      <div style={{ textAlign: 'center', padding: '60px 20px', color: '#7a6a57' }}>
-        <div style={{ fontSize: '3rem', marginBottom: '14px' }}>◈</div>
-        <p style={{ fontStyle: 'italic' }}>Click "Get Recommendations" and I'll suggest books based on what you've read and loved.</p>
-      </div>
-    )}
-
-    {recLoading && (
-      <div style={{ textAlign: 'center', padding: '60px 20px', color: '#7a6a57' }}>
-        <p style={{ fontStyle: 'italic' }}>Analyzing your reading taste...</p>
-      </div>
-    )}
-
-    {recsFetched && !recLoading && (
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '20px' }}>
-        {recs.map((r: any, i: number) => (
-          <div key={i} style={{ background: '#faf7f2', border: '1.5px solid #d4c5a9', borderRadius: '2px', padding: '16px' }}>
-            <div style={{ fontFamily: 'Georgia, serif', fontWeight: '700', fontSize: '0.9rem', marginBottom: '4px' }}>{r.title}</div>
-            <div style={{ fontSize: '0.75rem', color: '#7a6a57', fontStyle: 'italic', marginBottom: '8px' }}>{r.author}</div>
-            {r.genre && <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.1em', padding: '2px 7px', border: '1px solid #d4c5a9', color: '#7a6a57' }}>{r.genre}</span>}
-            <p style={{ fontSize: '0.78rem', color: '#7a6a57', marginTop: '8px', lineHeight: '1.5', fontStyle: 'italic' }}>{r.reason}</p>
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+            <div>
+              <h2 style={{ fontFamily: 'Georgia, serif', fontSize: '1.4rem', fontStyle: 'italic' }}>What to Read Next</h2>
+              <p style={{ color: '#7a6a57', fontSize: '0.85rem', marginTop: '4px' }}>Based on your reading history</p>
+            </div>
+            <button onClick={getRecommendations} disabled={recLoading} style={{ background: '#1a1410', color: '#faf7f2', border: 'none', padding: '8px 18px', fontFamily: 'Georgia, serif', fontSize: '0.8rem', cursor: 'pointer' }}>
+              {recLoading ? 'Thinking...' : recsFetched ? 'Refresh' : 'Get Recommendations'}
+            </button>
           </div>
-        ))}
-      </div>
-    )}
-  </div>
-)}
+          {!recsFetched && !recLoading && (
+            <div style={{ textAlign: 'center', padding: '60px 20px', color: '#7a6a57' }}>
+              <div style={{ fontSize: '3rem', marginBottom: '14px' }}>◈</div>
+              <p style={{ fontStyle: 'italic' }}>Click "Get Recommendations" and I'll suggest books based on what you've read and loved.</p>
+            </div>
+          )}
+          {recLoading && (
+            <div style={{ textAlign: 'center', padding: '60px 20px', color: '#7a6a57' }}>
+              <p style={{ fontStyle: 'italic' }}>Analyzing your reading taste...</p>
+            </div>
+          )}
+          {recsFetched && !recLoading && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '20px' }}>
+              {recs.map((r: any, i: number) => (
+                <div key={i} style={{ background: '#faf7f2', border: '1.5px solid #d4c5a9', borderRadius: '2px', padding: '16px' }}>
+                  <div style={{ fontFamily: 'Georgia, serif', fontWeight: '700', fontSize: '0.9rem', marginBottom: '4px' }}>{r.title}</div>
+                  <div style={{ fontSize: '0.75rem', color: '#7a6a57', fontStyle: 'italic', marginBottom: '8px' }}>{r.author}</div>
+                  {r.genre && <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.1em', padding: '2px 7px', border: '1px solid #d4c5a9', color: '#7a6a57' }}>{r.genre}</span>}
+                  <p style={{ fontSize: '0.78rem', color: '#7a6a57', marginTop: '8px', lineHeight: '1.5', fontStyle: 'italic' }}>{r.reason}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {activeBook && editData && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(26,20,16,0.65)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
@@ -380,7 +414,6 @@ async function getRecommendations() {
           <div style={{ background: '#faf7f2', border: '2px solid #1a1410', borderRadius: '2px', width: '100%', maxWidth: '560px', padding: '32px', position: 'relative', maxHeight: '90vh', overflowY: 'auto' }}
             onClick={e => e.stopPropagation()}>
             <button onClick={() => { setActiveBook(null); setEditData(null); setGeneratedReview('') }} style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: '#7a6a57' }}>×</button>
-
             <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
               {activeBook.cover
                 ? <img src={activeBook.cover} style={{ width: '80px', height: '120px', objectFit: 'cover', border: '1.5px solid #d4c5a9', flexShrink: 0 }} alt="" />
@@ -392,7 +425,6 @@ async function getRecommendations() {
                 {activeBook.genre && <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.1em', padding: '2px 8px', border: '1px solid #d4c5a9', color: '#7a6a57' }}>{activeBook.genre}</span>}
               </div>
             </div>
-
             <div style={{ display: 'flex', borderBottom: '1.5px solid #d4c5a9', marginBottom: '20px' }}>
               {['details', 'debrief', 'highlights'].map(t => (
                 <button key={t} onClick={() => setModalTab(t)} style={{
